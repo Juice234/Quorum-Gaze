@@ -1,0 +1,2 @@
+"""Simple BOTB GUI project."""
+
