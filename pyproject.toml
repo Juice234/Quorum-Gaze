@@ -5,20 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quorum"
 version = "0.1.0"
-description = "Simple GUI for BOTB scraping and YOLO person detection."
+description = "BOTB result scraper desktop app."
 requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.12",
     "pillow>=10.0",
-    "requests>=2.31",
+    "playwright>=1.40",
+    "pydantic>=2.0",
+    "openpyxl>=3.1",
 ]
-
-[project.optional-dependencies]
-yolo = ["ultralytics>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.ruff]
 line-length = 110
-

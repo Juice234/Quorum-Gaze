@@ -1,2 +1,1 @@
-"""Simple BOTB GUI project."""
-
+"""Quorum-Gaze desktop project."""
