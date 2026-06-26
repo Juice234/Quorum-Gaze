@@ -285,9 +285,7 @@ def build_gui() -> Tk:
     detail_image.grid(row=1, column=1, sticky="ew", padx=4, pady=3)
     detail_xy = Entry(selected_panel, bg=PANEL_2, fg=TEXT, relief="solid", bd=0)
     detail_xy.grid(row=1, column=3, sticky="ew", padx=4, pady=3)
-    detail_debug = Entry(selected_panel, bg=PANEL_2, fg=TEXT, relief="solid", bd=0)
-    detail_debug.grid(row=2, column=1, columnspan=3, sticky="ew", padx=4, pady=3)
-    for label_text, row_num, col_num in (("URL", 0, 0), ("Image:", 1, 0), ("X: -   Y: -", 1, 2), ("Debug:", 2, 0)):
+    for label_text, row_num, col_num in (("URL", 0, 0), ("Image:", 1, 0), ("X: -   Y: -", 1, 2)):
         make_label(selected_panel, label_text).grid(row=row_num, column=col_num, sticky="w", padx=4)
     selected_panel.grid_columnconfigure(1, weight=1)
     selected_panel.grid_columnconfigure(3, weight=1)
@@ -373,20 +371,18 @@ def build_gui() -> Tk:
         return rows_by_id.get(selected_row_id.get())
 
     def update_detail_entries(row: dict | None) -> None:
-        for entry in (detail_url, detail_image, detail_xy, detail_debug):
+        for entry in (detail_url, detail_image, detail_xy):
             entry.delete(0, END)
 
         if not row:
             detail_url.insert(0, "No row selected")
             detail_image.insert(0, "-")
             detail_xy.insert(0, "X: -   Y: -")
-            detail_debug.insert(0, "-")
             return
 
         detail_url.insert(0, cell(row.get("url")))
         detail_image.insert(0, cell(row.get("clean_image_path")))
         detail_xy.insert(0, f"X: {cell(row.get('judge_x'))}   Y: {cell(row.get('judge_y'))}")
-        detail_debug.insert(0, cell(row.get("debug_dir")))
 
     def filter_rows() -> list[dict]:
         text = search_entry.get().strip().lower()

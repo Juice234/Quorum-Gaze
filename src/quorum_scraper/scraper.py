@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import re
+from html import unescape
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode, urljoin
 
 from bs4 import BeautifulSoup
+from PIL import Image
 from playwright.async_api import async_playwright
 
 from .database import ResultsDatabase
-from .downloader import download_with_context, read_image_size
 from .export import export_dataset
 from .models import ResultRow
 from .utils import ensure_out_dirs, image_paths, normalize_space, winner_code, winner_url
@@ -29,7 +31,7 @@ COORD_PATTERNS = [
 # the actual image sits behind this BOTB endpoint; we just need the picture GUID from the page
 VIEW_PATH = "/umbraco/surface/CompetitionResultSurface/viewimage"
 GUID_RE = re.compile(
-    r"competitionPictureGuid\s*[:=]\s*['\"]?([0-9a-fA-F-]{32,36})",
+    r"(?:competitionPictureGuid|pictureGuid)\s*[:=]\s*['\"]?([0-9a-fA-F-]{32,36})",
     re.IGNORECASE,
 )
 
@@ -46,7 +48,7 @@ def find_coordinate(text: str) -> tuple[int | None, int | None]:
 
 def find_picture_guid(html: str) -> str | None:
     # the GUID is in a viewimage link or in a bit of page script; grab the first one
-    match = GUID_RE.search(html)
+    match = GUID_RE.search(unescape(html))
     return match.group(1) if match else None
 
 
@@ -62,6 +64,37 @@ def build_view_url(base_url: str, guid: str, include_judged: bool) -> str:
         }
     )
     return urljoin(base_url, f"{VIEW_PATH}?{query}")
+
+
+async def save_view_image(page: Any, url: str, path: Path, timeout_ms: int) -> None:
+    # BOTB draws the full image onto a canvas so save that instead of the HTML page
+    response = await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+    if response and response.status >= 400:
+        raise RuntimeError(f"image page returned HTTP {response.status}")
+
+    canvas = page.locator("canvas").first
+    await canvas.wait_for(state="visible", timeout=timeout_ms)
+    await page.wait_for_function(
+        """() => {
+            const canvas = document.querySelector('canvas')
+            if (!canvas || canvas.width < 2 || canvas.height < 2) return false
+            const pixel = canvas.getContext('2d').getImageData(
+                Math.floor(canvas.width / 2),
+                Math.floor(canvas.height / 2),
+                1,
+                1
+            ).data
+            return pixel[3] > 0
+        }""",
+        timeout=timeout_ms,
+    )
+
+    data_url = await canvas.evaluate("(item) => item.toDataURL('image/jpeg', 0.95)")
+    if not data_url.startswith("data:image/jpeg;base64,"):
+        raise RuntimeError("BOTB canvas did not return a JPEG image")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(base64.b64decode(data_url.split(",", 1)[1]))
 
 
 def extract_title(html: str) -> str | None:
@@ -161,6 +194,12 @@ class BotbScraper:
                 self._progress("entry-missing", code=code)
                 return
 
+            # wait for the page to settle so the image links have loaded in
+            try:
+                await page.wait_for_load_state("networkidle", timeout=min(self.timeout_ms, 10_000))
+            except Exception:
+                pass
+
             html = await page.content()
             text = await page.locator("body").inner_text(timeout=5_000)
             title = extract_title(html)
@@ -169,13 +208,12 @@ class BotbScraper:
             if not guid:
                 raise RuntimeError("could not find competition picture GUID")
 
-            # download the clean and judged images straight from the endpoint
-            await download_with_context(context, build_view_url(url, guid, False), clean_path,
-                                        referer=url, timeout_ms=self.timeout_ms)
-            await download_with_context(context, build_view_url(url, guid, True), judged_path,
-                                        referer=url, timeout_ms=self.timeout_ms)
+            # BOTB uses the same canvas page for both versions
+            await save_view_image(page, build_view_url(url, guid, False), clean_path, self.timeout_ms)
+            await save_view_image(page, build_view_url(url, guid, True), judged_path, self.timeout_ms)
 
-            width, height = read_image_size(clean_path)
+            with Image.open(clean_path) as image:
+                width, height = image.size
             status = "ok" if judge_x is not None else "coordinate_unresolved"
             db.upsert(ResultRow(
                 url=url, competition=competition, year=year, week=week, title=title,
