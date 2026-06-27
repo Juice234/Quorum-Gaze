@@ -31,12 +31,14 @@ from tkinter import messagebox
 
 from PIL import Image, ImageDraw, ImageTk
 
+from quorum.player_detector import detect_people, draw_people
 from quorum_scraper.database import ResultsDatabase
 from quorum_scraper.scraper import BotbScraper
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_DIR / "data"
+DETECTION_DIR = DATA_DIR / "detections"
 
 BG = "#070d1a"
 PANEL = "#101a2d"
@@ -168,6 +170,17 @@ def image_with_cross(path: str, x: int | None, y: int | None) -> Image.Image:
 
 
 def show_preview(preview_label: Label, row: dict | None, preview_mode: str) -> None:
+    if preview_mode == "players":
+        # show the boxed image we saved after running YOLO
+        players_path = getattr(preview_label, "players_image_path", None)
+        if players_path and Path(players_path).exists():
+            image = Image.open(players_path).convert("RGB")
+            image.thumbnail((1420, 320))
+            tk_image = ImageTk.PhotoImage(image)
+            preview_label.configure(image=tk_image, text="")
+            preview_label.image = tk_image
+            return
+
     path = row_image_path(row, preview_mode)
     if not path or not Path(path).exists():
         preview_label.configure(image="", text="Select a result row")
@@ -534,6 +547,34 @@ def build_gui() -> Tk:
         overwrite_var.set(True)
         start_scrape()
 
+    def run_yolo_selected() -> None:
+        row = current_row()
+        if not row or not row.get("clean_image_path"):
+            messagebox.showinfo("No image", "Scrape and select a row first.")
+            return
+        image_path = Path(row["clean_image_path"])
+        if not image_path.exists():
+            messagebox.showinfo("No image", "The clean image file is missing.")
+            return
+
+        result_queue: queue.Queue = queue.Queue()
+        out_path = DETECTION_DIR / f"{cell(row.get('competition'))}_{cell(row.get('year'))}_{cell(row.get('week'))}_players.jpg"
+        log(log_box, f"Running YOLO on {image_path.name} ...")
+
+        def job() -> dict:
+            people = detect_people(image_path)
+            draw_people(image_path, people, out_path)
+            return {"count": len(people), "image": str(out_path)}
+
+        def on_ok(result: dict) -> None:
+            log(log_box, f"Found {result['count']} people")
+            preview_label.players_image_path = result["image"]
+            preview_mode.set("players")
+            show_preview(preview_label, current_row(), "players")
+
+        run_in_thread(job, result_queue)
+        poll_thread(root, result_queue, on_ok, lambda err: log(log_box, f"YOLO failed: {err}"))
+
     def install_requirements() -> None:
         # handy when I open the project on another machine
         command = [sys.executable, "-m", "pip", "install", "-e", "."]
@@ -559,18 +600,17 @@ def build_gui() -> Tk:
         start_week_var.set("1")
         end_week_var.set("52")
 
-    # only keeping the scraper action here for this stage
     make_button(preview_actions, "Rescrape selected entry", rescrape_selected, 30).grid(
         row=1, column=0, columnspan=3, sticky="ew", padx=6, pady=4
+    )
+    make_button(preview_actions, "Run YOLO player detection", run_yolo_selected, 30).grid(
+        row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=4
     )
     for col in range(3):
         preview_actions.grid_columnconfigure(col, weight=1)
 
     make_button(button_grid, "Install requirements", install_requirements, 32).grid(row=0, column=0, columnspan=4, sticky="ew", padx=4, pady=4)
     make_button(button_grid, "Start scrape", start_scrape, 32).grid(row=1, column=0, columnspan=4, sticky="ew", padx=4, pady=4)
-    Label(button_grid, text="Next step: add YOLO player detection after the scraper is stable", bg=PANEL, fg=MUTED).grid(
-        row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(10, 4)
-    )
     Label(button_grid, text="Older-year presets", bg=PANEL, fg=TEXT).grid(row=3, column=0, sticky="w", padx=4, pady=(8, 4))
     make_button(button_grid, "Dream Car 2017", preset_2017, 18).grid(row=4, column=0, sticky="ew", padx=4, pady=4)
     make_button(button_grid, "Dream Car 2026", preset_current, 18).grid(row=4, column=1, sticky="ew", padx=4, pady=4)
