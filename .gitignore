@@ -1,8 +1,15 @@
+data/
+external/
+runs/
+
+# Local Python and PyCharm files
 .venv/
 __pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
-data/
-outputs/
-*.pt
+.idea/
+
+# Local credentials and archives
+.env
+.env.*
+*.zip
+*.rar
